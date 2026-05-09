@@ -1,0 +1,66 @@
+name: Bug report
+description: Something isn't working as documented
+labels: ["bug", "needs triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug report. The more detail you provide, the faster we can fix it.
+  - type: input
+    id: plugin-version
+    attributes:
+      label: Plugin version
+      description: The version of `paperclip-plugin-line` you have installed (run `npm ls paperclip-plugin-line`).
+      placeholder: "0.1.0"
+    validations:
+      required: true
+  - type: input
+    id: paperclip-version
+    attributes:
+      label: Paperclip version
+      description: The Paperclip server version that's hosting this plugin.
+      placeholder: "1.42.0"
+    validations:
+      required: true
+  - type: input
+    id: node-version
+    attributes:
+      label: Node version
+      placeholder: "v20.11.1"
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear description of the bug. Include any error messages and the plugin's `health` response if relevant.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: A minimal reproduction. A signed webhook payload or tool-call trace is ideal.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant plugin telemetry
+      description: |
+        Paste counters from the `line-ops` data source or `/api/plugins/<id>/health` if relevant. Redact any tokens or LINE userIds.
+      render: json
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Code of Conduct
+      options:
+        - label: I agree to follow this project's [Code of Conduct](../CODE_OF_CONDUCT.md).
+          required: true

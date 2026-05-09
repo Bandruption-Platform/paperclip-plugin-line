@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question or general discussion
+    url: https://github.com/Bandruption-Platform/paperclip-plugin-line/discussions
+    about: Ask a question, propose an idea, or talk to the community before opening an issue.
+  - name: Paperclip core
+    url: https://github.com/paperclipai/paperclip/issues
+    about: For issues with Paperclip itself (the agent platform), not this LINE plugin.

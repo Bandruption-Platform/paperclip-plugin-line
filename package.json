@@ -1,0 +1,65 @@
+{
+  "name": "paperclip-plugin-line",
+  "version": "0.1.0",
+  "description": "Bidirectional LINE Messaging API integration for Paperclip: verified webhook intake, agent sessions per LINE user, outbound LINE push tools, and inbound media relay.",
+  "keywords": [
+    "paperclip",
+    "paperclip-plugin",
+    "line",
+    "line-messaging-api",
+    "chatbot",
+    "agents",
+    "webhook"
+  ],
+  "homepage": "https://github.com/Bandruption-Platform/paperclip-plugin-line#readme",
+  "bugs": {
+    "url": "https://github.com/Bandruption-Platform/paperclip-plugin-line/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Bandruption-Platform/paperclip-plugin-line.git"
+  },
+  "license": "MIT",
+  "author": "Bandruption (https://bandruption.com)",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "paperclipPlugin": {
+    "manifest": "./dist/manifest.js",
+    "worker": "./dist/worker.js"
+  },
+  "files": [
+    "dist/",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "clean": "rm -rf dist",
+    "dev": "tsc --watch",
+    "test": "vitest run --config ./vitest.config.ts",
+    "test:watch": "vitest --config ./vitest.config.ts",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run clean && npm run build"
+  },
+  "dependencies": {
+    "@paperclipai/plugin-sdk": "^2026.428.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.6.0",
+    "typescript": "^5.7.3",
+    "vitest": "^3.2.4"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
