@@ -1,5 +1,5 @@
-export const PLUGIN_ID = "line-bridge";
-export const PLUGIN_VERSION = "0.2.0";
+export const PLUGIN_ID = "paperclip-plugin-line";
+export const PLUGIN_VERSION = "1.0.0";
 
 export const PRINCIPAL_STATUSES = {
   pending: "pending",

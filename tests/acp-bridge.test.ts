@@ -484,10 +484,10 @@ describe("ACP bridge — wiring sanity", () => {
   });
 
   it("documents the plugin-id namespace ACP must subscribe to", () => {
-    expect(manifest.id).toBe("line-bridge");
-    expect(`plugin.${manifest.id}.${ACP_EVENT_NAMES.spawn}`).toBe("plugin.line-bridge.acp-spawn");
-    expect(`plugin.${manifest.id}.${ACP_EVENT_NAMES.message}`).toBe("plugin.line-bridge.acp-message");
-    expect(`plugin.${manifest.id}.${ACP_EVENT_NAMES.close}`).toBe("plugin.line-bridge.acp-close");
+    expect(manifest.id).toBe("paperclip-plugin-line");
+    expect(`plugin.${manifest.id}.${ACP_EVENT_NAMES.spawn}`).toBe("plugin.paperclip-plugin-line.acp-spawn");
+    expect(`plugin.${manifest.id}.${ACP_EVENT_NAMES.message}`).toBe("plugin.paperclip-plugin-line.acp-message");
+    expect(`plugin.${manifest.id}.${ACP_EVENT_NAMES.close}`).toBe("plugin.paperclip-plugin-line.acp-close");
   });
 });
 

@@ -6,9 +6,9 @@
  * worker treats it as an ACP agent name (e.g. `"claude"`, `"gemini"`) and
  * routes the turn to ACP via plugin-namespaced bus events:
  *
- *   plugin.line-bridge.acp-spawn   { sessionId, agentName, chatId, threadId, companyId, mode }
- *   plugin.line-bridge.acp-message { sessionId, text }
- *   plugin.line-bridge.acp-close   { sessionId }
+ *   plugin.paperclip-plugin-line.acp-spawn   { sessionId, agentName, chatId, threadId, companyId, mode }
+ *   plugin.paperclip-plugin-line.acp-message { sessionId, text }
+ *   plugin.paperclip-plugin-line.acp-close   { sessionId }
  *
  * The ACP plugin emits `plugin.paperclip-plugin-acp.output { sessionId, type, text, ... }`;
  * we subscribe in `setup` and relay text frames back to LINE via the normal

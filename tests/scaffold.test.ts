@@ -15,7 +15,7 @@ import manifest from "../src/manifest.js";
 describe("paperclip-plugin-line manifest", () => {
   it("declares the public plugin identity", () => {
     expect(manifest.id).toBe(PLUGIN_ID);
-    expect(manifest.id).toBe("line-bridge");
+    expect(manifest.id).toBe("paperclip-plugin-line");
     expect(manifest.version).toBe(PLUGIN_VERSION);
     expect(manifest.apiVersion).toBe(1);
     expect(manifest.description).toContain("verified webhook intake");
