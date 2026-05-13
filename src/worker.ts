@@ -29,7 +29,15 @@ import {
 import type { LineBridgeExtensions, ProvisionPrincipalContext } from "./extensions.js";
 import { withLock } from "./lock.js";
 import manifest from "./manifest.js";
-import { closeThreadSession, deliverLineTurnToSession } from "./session-registry.js";
+import {
+  closeThreadSession,
+  deliverLineTurnToSession,
+  type SessionMode,
+} from "./session-registry.js";
+import {
+  registerAcpOutputListener,
+  setAcpRelayHandler,
+} from "./acp-bridge.js";
 
 const PENDING_KEYS_LOCK = "pending-keys";
 const LINE_OPS_LOCK = "line-operations";
@@ -225,6 +233,11 @@ type LineOpsState = {
   replyTokenMisses: number;
   idleThreadsClosed: number;
   idleThreadsPruned: number;
+  acpSpawned: number;
+  acpMessages: number;
+  acpClosed: number;
+  acpOutputRelayed: number;
+  acpOutputDropped: number;
   lastWebhook?: LineOpsLastWebhook;
   lastQueueDrain?: LineOpsLastQueueDrain;
   lastPushLimitRejection?: {
@@ -386,6 +399,11 @@ function createEmptyLineOpsState(now = new Date().toISOString()): LineOpsState {
     replyTokenMisses: 0,
     idleThreadsClosed: 0,
     idleThreadsPruned: 0,
+    acpSpawned: 0,
+    acpMessages: 0,
+    acpClosed: 0,
+    acpOutputRelayed: 0,
+    acpOutputDropped: 0,
   };
 }
 
@@ -415,6 +433,11 @@ function parseLineOpsState(raw: unknown): LineOpsState {
   state.replyTokenMisses = readNumber(record, "replyTokenMisses");
   state.idleThreadsClosed = readNumber(record, "idleThreadsClosed");
   state.idleThreadsPruned = readNumber(record, "idleThreadsPruned");
+  state.acpSpawned = readNumber(record, "acpSpawned");
+  state.acpMessages = readNumber(record, "acpMessages");
+  state.acpClosed = readNumber(record, "acpClosed");
+  state.acpOutputRelayed = readNumber(record, "acpOutputRelayed");
+  state.acpOutputDropped = readNumber(record, "acpOutputDropped");
   state.lastWebhook = asRecord(record.lastWebhook) as LineOpsLastWebhook | undefined;
   state.lastQueueDrain = asRecord(record.lastQueueDrain) as LineOpsLastQueueDrain | undefined;
   state.lastPushLimitRejection = asRecord(record.lastPushLimitRejection) as LineOpsState["lastPushLimitRejection"];
@@ -1291,13 +1314,23 @@ async function closeLineThread(input: {
   closedAt: string;
   reason: "idle" | "tool_close" | "manual";
 }): Promise<void> {
-  await closeThreadSession({
+  const closedSession = await closeThreadSession({
     ctx: input.ctx,
     companyId: input.companyId,
     issueId: input.thread.paperclipIssueId,
     closedAt: input.closedAt,
     reason: input.reason,
   });
+
+  if (closedSession?.agentId.startsWith("acp:")) {
+    await tryUpdateLineOpsState(input.ctx, (state) => {
+      state.acpClosed += 1;
+    });
+    await writeMetric(input.ctx, "line.acp.close", 1, {
+      companyId: input.companyId,
+      reason: input.reason,
+    });
+  }
 
   const issue = await input.ctx.issues.get(input.thread.paperclipIssueId, input.companyId);
   if (issue && !["done", "cancelled"].includes(issue.status)) {
@@ -1564,7 +1597,10 @@ async function processQueuedEventWithActivePrincipal(
   }
 
   const existingDeliveryContext = queuedEvent.deliveryContext;
-  const agentId = await resolveAgentId(ctx, principal, existingDeliveryContext?.agentId);
+  const nativeAgentId = await resolveAgentId(ctx, principal, existingDeliveryContext?.agentId);
+  const fallbackAgentName = (existingDeliveryContext?.agentId ?? principal.agentId ?? "").trim();
+  const sessionMode: SessionMode = nativeAgentId ? "native" : "acp";
+  const agentId = nativeAgentId ?? fallbackAgentName;
   if (!agentId) {
     ctx.logger.warn("Skipping LINE event: no agent available for principal", {
       requestId,
@@ -1579,6 +1615,14 @@ async function processQueuedEventWithActivePrincipal(
       lineUserId,
       reason: "no_agent",
     };
+  }
+  if (sessionMode === "acp") {
+    ctx.logger.info("Routing LINE turn via ACP fallback", {
+      requestId,
+      lineUserId,
+      paperclipCompany: principal.paperclipCompany,
+      agentName: agentId,
+    });
   }
 
   return await withLock(
@@ -1730,15 +1774,18 @@ async function processQueuedEventWithActivePrincipal(
           commentId: deliveryCommentId,
           text: sessionText,
           occurredAt,
-          onEvent: (event) => handleLineSessionEventPush({
-            ctx,
-            config,
-            companyId: deliveryCompanyId,
-            agentId: deliveryAgentId,
-            lineUserId,
-            issueId: deliveryIssueId,
-            event,
-          }),
+          mode: sessionMode,
+          onEvent: sessionMode === "native"
+            ? (event) => handleLineSessionEventPush({
+                ctx,
+                config,
+                companyId: deliveryCompanyId,
+                agentId: deliveryAgentId,
+                lineUserId,
+                issueId: deliveryIssueId,
+                event,
+              })
+            : undefined,
         });
 
         if (!sessionDelivery.delivered) {
@@ -1747,8 +1794,28 @@ async function processQueuedEventWithActivePrincipal(
             lineUserId,
             paperclipCompany: deliveryCompanyId,
             agentId: deliveryAgentId,
+            mode: sessionMode,
           });
           throw new Error(`LINE session delivery failed for queued event ${dedupKey}`);
+        }
+
+        if (sessionMode === "acp") {
+          await tryUpdateLineOpsState(ctx, (state) => {
+            if (sessionDelivery.reason === "reused") {
+              state.acpMessages += 1;
+            } else {
+              state.acpSpawned += 1;
+              state.acpMessages += 1;
+            }
+          });
+          await writeMetric(ctx, "line.acp.spawn", sessionDelivery.reason === "reused" ? 0 : 1, {
+            companyId: deliveryCompanyId,
+            agentName: deliveryAgentId,
+          });
+          await writeMetric(ctx, "line.acp.message", 1, {
+            companyId: deliveryCompanyId,
+            agentName: deliveryAgentId,
+          });
         }
 
         resultReason = `${threadOutcome}:${sessionDelivery.reason}`;
@@ -1848,7 +1915,7 @@ async function recordLinePushAttempt(
     agentId: string;
     lineUserId: string;
     messageType: string;
-    source: "tool" | "session_stream";
+    source: "tool" | "session_stream" | "acp_relay";
   },
 ): Promise<void> {
   await tryUpdateLineOpsState(ctx, (state) => {
@@ -1870,7 +1937,7 @@ async function recordLinePushOutcome(
     agentId: string;
     lineUserId: string;
     messageType: string;
-    source: "tool" | "session_stream";
+    source: "tool" | "session_stream" | "acp_relay";
   },
 ): Promise<void> {
   await tryUpdateLineOpsState(ctx, (state) => {
@@ -2139,6 +2206,79 @@ async function handleLineSessionEventPush(input: {
       eventType: input.event.eventType,
       error: error instanceof Error ? error.message : String(error),
     });
+  }
+}
+
+/**
+ * Relay an ACP `output` frame to LINE. Like the session-stream push path,
+ * this bypasses the daily push budget because the agent's text is the user's
+ * actual reply, not a tool-initiated outbound message.
+ */
+async function pushAcpRelay(
+  ctx: PluginContext,
+  binding: { companyId: string; lineUserId: string; agentName: string; issueId: string },
+  type: "text" | "error",
+  text: string,
+): Promise<void> {
+  const trimmed = truncateLineText(text);
+  if (trimmed.length === 0) {
+    await tryUpdateLineOpsState(ctx, (state) => {
+      state.acpOutputDropped += 1;
+    });
+    return;
+  }
+
+  const config = await getConfig(ctx);
+  const agentLabel = `acp:${binding.agentName}`;
+  try {
+    await recordLinePushAttempt(ctx, {
+      companyId: binding.companyId,
+      agentId: agentLabel,
+      lineUserId: binding.lineUserId,
+      messageType: type,
+      source: "acp_relay",
+    });
+    await sendLinePushMessages(ctx, config, binding.lineUserId, [
+      {
+        type: "text",
+        text: trimmed,
+      },
+    ]);
+    await recordLinePushOutcome(ctx, "succeeded", {
+      companyId: binding.companyId,
+      agentId: agentLabel,
+      lineUserId: binding.lineUserId,
+      messageType: type,
+      source: "acp_relay",
+    });
+    await tryUpdateLineOpsState(ctx, (state) => {
+      state.acpOutputRelayed += 1;
+    });
+    await writeMetric(ctx, "line.acp.output_relayed", 1, {
+      companyId: binding.companyId,
+      agentName: binding.agentName,
+      type,
+    });
+  } catch (error) {
+    await recordLinePushOutcome(ctx, "failed", {
+      companyId: binding.companyId,
+      agentId: agentLabel,
+      lineUserId: binding.lineUserId,
+      messageType: type,
+      source: "acp_relay",
+    });
+    await tryUpdateLineOpsState(ctx, (state) => {
+      state.acpOutputDropped += 1;
+    });
+    ctx.logger.warn("Failed to push ACP relay to LINE", {
+      companyId: binding.companyId,
+      lineUserId: binding.lineUserId,
+      issueId: binding.issueId,
+      agentName: binding.agentName,
+      type,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
   }
 }
 
@@ -2816,6 +2956,10 @@ const plugin = definePlugin({
     await registerJobHandlers(ctx);
     await registerToolHandlers(ctx);
     ctx.data.register(LINE_OPS_DATA_KEY, async () => await getLineOpsSnapshot(ctx));
+    setAcpRelayHandler(async ({ binding, type, text }) => {
+      await pushAcpRelay(ctx, binding, type, text);
+    });
+    registerAcpOutputListener(ctx);
     ctx.logger.info("LINE bridge setup complete", {
       pluginId: manifest.id,
       jobCount: getDeclaredJobKeys().length,

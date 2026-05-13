@@ -1,5 +1,5 @@
 export const PLUGIN_ID = "line-bridge";
-export const PLUGIN_VERSION = "0.1.0";
+export const PLUGIN_VERSION = "0.2.0";
 
 export const PRINCIPAL_STATUSES = {
   pending: "pending",
@@ -28,6 +28,7 @@ export const JOB_KEYS = {
 } as const;
 
 export const STATE_NAMESPACES = {
+  acp: "acp",
   events: "events",
   operations: "operations",
   pushLimits: "push-limits",
@@ -36,6 +37,26 @@ export const STATE_NAMESPACES = {
   threads: "threads",
   webhooks: WEBHOOK_NAMESPACE,
 } as const;
+
+export const ACP_PLUGIN_ID = "paperclip-plugin-acp";
+
+export const ACP_EVENT_NAMES = {
+  spawn: "acp-spawn",
+  message: "acp-message",
+  close: "acp-close",
+} as const;
+
+export const ACP_OUTPUT_EVENT = `plugin.${ACP_PLUGIN_ID}.output` as const;
+
+export type AcpThreadBinding = {
+  version: number;
+  acpSessionId: string;
+  companyId: string;
+  lineUserId: string;
+  issueId: string;
+  agentName: string;
+  openedAt: string;
+};
 
 export const STATE_KEYS = {
   commentMetaIndex: "comment-meta-index",

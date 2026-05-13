@@ -1,8 +1,20 @@
 import type { AgentSessionEvent, PluginContext } from "@paperclipai/plugin-sdk";
+import { emitAcpClose, emitAcpMessage, emitAcpSpawn } from "./acp-bridge.js";
 import { STATE_NAMESPACES, type ThreadSessionState } from "./constants.js";
 import { withLock } from "./lock.js";
 
 const SESSION_LOCK_PREFIX = "line-session";
+
+export type SessionMode = "native" | "acp";
+const ACP_AGENT_PREFIX = "acp:";
+
+function isAcpSessionState(state: ThreadSessionState): boolean {
+  return state.agentId.startsWith(ACP_AGENT_PREFIX);
+}
+
+function acpAgentMarker(agentName: string): string {
+  return `${ACP_AGENT_PREFIX}${agentName}`;
+}
 
 type CloseThreadSessionInput = {
   ctx: PluginContext;
@@ -21,6 +33,7 @@ type DeliverLineTurnInput = {
   commentId: string;
   text: string;
   occurredAt: string;
+  mode?: SessionMode;
   onEvent?: (event: AgentSessionEvent) => void;
 };
 
@@ -29,6 +42,7 @@ export type DeliverLineTurnResult = {
   reopened: boolean;
   sessionId: string | null;
   reason: "created" | "reused" | "reopened" | "delivery_failed";
+  mode: SessionMode;
 };
 
 function companySessionState(companyId: string, issueId: string) {
@@ -122,7 +136,7 @@ async function markClosed(
   return next;
 }
 
-async function sendToSession(input: DeliverLineTurnInput, sessionId: string): Promise<void> {
+async function sendToNativeSession(input: DeliverLineTurnInput, sessionId: string): Promise<void> {
   await input.ctx.agents.sessions.sendMessage(sessionId, input.companyId, {
     prompt: buildSessionPrompt(input),
     reason: `Inbound LINE turn for issue ${input.issueId}`,
@@ -130,7 +144,7 @@ async function sendToSession(input: DeliverLineTurnInput, sessionId: string): Pr
   });
 }
 
-async function closeRemoteSessionBestEffort(
+async function closeRemoteNativeSessionBestEffort(
   input: Pick<DeliverLineTurnInput, "ctx" | "companyId" | "issueId">,
   sessionId: string,
 ): Promise<void> {
@@ -146,13 +160,44 @@ async function closeRemoteSessionBestEffort(
   }
 }
 
+async function closeRemoteAcpSessionBestEffort(
+  input: Pick<DeliverLineTurnInput, "ctx" | "companyId" | "issueId">,
+  acpSessionId: string,
+): Promise<void> {
+  try {
+    await emitAcpClose({
+      ctx: input.ctx,
+      companyId: input.companyId,
+      acpSessionId,
+    });
+  } catch (error) {
+    input.ctx.logger.warn("Failed to emit acp-close cleanly", {
+      issueId: input.issueId,
+      acpSessionId,
+      companyId: input.companyId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+async function tearDownRemoteSession(
+  input: Pick<DeliverLineTurnInput, "ctx" | "companyId" | "issueId">,
+  existing: ThreadSessionState,
+): Promise<void> {
+  if (isAcpSessionState(existing)) {
+    await closeRemoteAcpSessionBestEffort(input, existing.sessionId);
+  } else {
+    await closeRemoteNativeSessionBestEffort(input, existing.sessionId);
+  }
+}
+
 export async function closeThreadSession(input: CloseThreadSessionInput): Promise<ThreadSessionState | null> {
   return withLock(`${SESSION_LOCK_PREFIX}:${input.issueId}`, async () => {
     const existing = await getThreadSessionState(input.ctx, input.companyId, input.issueId);
     if (!existing) return null;
 
     if (existing.status === "open") {
-      await closeRemoteSessionBestEffort(input, existing.sessionId);
+      await tearDownRemoteSession(input, existing);
     }
 
     return markClosed(
@@ -169,12 +214,24 @@ export async function closeThreadSession(input: CloseThreadSessionInput): Promis
 export async function deliverLineTurnToSession(
   input: DeliverLineTurnInput,
 ): Promise<DeliverLineTurnResult> {
+  const mode: SessionMode = input.mode ?? "native";
+  const persistedAgentId = mode === "acp" ? acpAgentMarker(input.agentId) : input.agentId;
+
   return withLock(`${SESSION_LOCK_PREFIX}:${input.issueId}`, async () => {
     const existing = await getThreadSessionState(input.ctx, input.companyId, input.issueId);
 
-    if (existing?.status === "open" && existing.agentId === input.agentId) {
+    if (existing?.status === "open" && existing.agentId === persistedAgentId) {
       try {
-        await sendToSession(input, existing.sessionId);
+        if (mode === "acp") {
+          await emitAcpMessage({
+            ctx: input.ctx,
+            companyId: input.companyId,
+            acpSessionId: existing.sessionId,
+            text: input.text,
+          });
+        } else {
+          await sendToNativeSession(input, existing.sessionId);
+        }
         await setThreadSessionState(input.ctx, input.companyId, input.issueId, {
           ...existing,
           lastActivityAt: input.occurredAt,
@@ -185,12 +242,14 @@ export async function deliverLineTurnToSession(
           reopened: false,
           sessionId: existing.sessionId,
           reason: "reused",
+          mode,
         };
       } catch (error) {
         input.ctx.logger.warn("LINE thread session send failed; reopening session", {
           issueId: input.issueId,
           sessionId: existing.sessionId,
           companyId: input.companyId,
+          mode,
           error: error instanceof Error ? error.message : String(error),
         });
         await markClosed(
@@ -203,7 +262,7 @@ export async function deliverLineTurnToSession(
         );
       }
     } else if (existing?.status === "open") {
-      await closeRemoteSessionBestEffort(input, existing.sessionId);
+      await tearDownRemoteSession(input, existing);
       await markClosed(
         input.ctx,
         input.companyId,
@@ -216,24 +275,47 @@ export async function deliverLineTurnToSession(
 
     let createdSessionId: string | null = null;
     try {
-      const session = await input.ctx.agents.sessions.create(input.agentId, input.companyId, {
-        taskKey: `line-thread-${input.issueId}`,
-        reason: `LINE thread session for issue ${input.issueId}`,
-      });
-      createdSessionId = session.sessionId;
-      await sendToSession(input, createdSessionId);
+      if (mode === "acp") {
+        const spawned = await emitAcpSpawn({
+          ctx: input.ctx,
+          companyId: input.companyId,
+          agentName: input.agentId,
+          issueId: input.issueId,
+          lineUserId: input.lineUserId,
+          occurredAt: input.occurredAt,
+        });
+        createdSessionId = spawned.acpSessionId;
+        await emitAcpMessage({
+          ctx: input.ctx,
+          companyId: input.companyId,
+          acpSessionId: createdSessionId,
+          text: input.text,
+        });
+      } else {
+        const session = await input.ctx.agents.sessions.create(input.agentId, input.companyId, {
+          taskKey: `line-thread-${input.issueId}`,
+          reason: `LINE thread session for issue ${input.issueId}`,
+        });
+        createdSessionId = session.sessionId;
+        await sendToNativeSession(input, createdSessionId);
+      }
     } catch (error) {
       if (typeof createdSessionId === "string") {
-        try {
-          await input.ctx.agents.sessions.close(createdSessionId, input.companyId);
-        } catch {
-          // Best-effort cleanup after partial session creation.
+        if (mode === "acp") {
+          await closeRemoteAcpSessionBestEffort(input, createdSessionId);
+        } else {
+          try {
+            await input.ctx.agents.sessions.close(createdSessionId, input.companyId);
+          } catch {
+            // Best-effort cleanup after partial session creation.
+          }
         }
       }
       input.ctx.logger.error("Failed to deliver LINE turn to agent session", {
         issueId: input.issueId,
         companyId: input.companyId,
         agentId: input.agentId,
+        mode,
         error: error instanceof Error ? error.message : String(error),
       });
       return {
@@ -241,6 +323,7 @@ export async function deliverLineTurnToSession(
         reopened: Boolean(existing),
         sessionId: null,
         reason: "delivery_failed",
+        mode,
       };
     }
 
@@ -249,7 +332,7 @@ export async function deliverLineTurnToSession(
       issueId: input.issueId,
       lineUserId: input.lineUserId,
       sessionId,
-      agentId: input.agentId,
+      agentId: persistedAgentId,
       status: "open",
       openedAt: input.occurredAt,
       lastActivityAt: input.occurredAt,
@@ -261,6 +344,7 @@ export async function deliverLineTurnToSession(
       reopened: Boolean(existing),
       sessionId,
       reason: existing ? "reopened" : "created",
+      mode,
     };
   });
 }
