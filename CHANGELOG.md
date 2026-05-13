@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file. Format foll
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-05-13
+
+### Added
+
+- Added the ACP fallback bridge for LINE principals whose resolved `agentId` is not registered natively, including `acp-spawn`, `acp-message`, `acp-close`, and `plugin.paperclip-plugin-acp.output` relay handling.
+- Declared manifest permissions for `events.emit` and `events.subscribe` so ACP bus traffic is explicit and least-privilege.
+- Added the plugin-scoped ACP state namespace and bindings used to persist ACP session routing state.
+- Added ACP operational counters in `line-ops` and health snapshots for spawned sessions, relayed messages, closes, and dropped ACP output.
+
+### Changed
+
+- Documented the release verification expectation that upstream `paperclip-plugin-acp` must listen to `line-bridge` and honor caller-supplied ACP `sessionId` values before publishing.
+
 ## [0.1.0]
 
 Initial public release. First-class LINE Messaging API integration for Paperclip.

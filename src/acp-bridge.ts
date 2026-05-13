@@ -6,9 +6,9 @@
  * worker treats it as an ACP agent name (e.g. `"claude"`, `"gemini"`) and
  * routes the turn to ACP via plugin-namespaced bus events:
  *
- *   plugin.paperclip-plugin-line.acp-spawn   { sessionId, agentName, chatId, threadId, companyId, mode }
- *   plugin.paperclip-plugin-line.acp-message { sessionId, text }
- *   plugin.paperclip-plugin-line.acp-close   { sessionId }
+ *   plugin.line-bridge.acp-spawn   { sessionId, agentName, chatId, threadId, companyId, mode }
+ *   plugin.line-bridge.acp-message { sessionId, text }
+ *   plugin.line-bridge.acp-close   { sessionId }
  *
  * The ACP plugin emits `plugin.paperclip-plugin-acp.output { sessionId, type, text, ... }`;
  * we subscribe in `setup` and relay text frames back to LINE via the normal
@@ -51,19 +51,6 @@ function bindingLocator(companyId: string, acpSessionId: string) {
   };
 }
 
-function indexLocator() {
-  return {
-    scopeKind: "instance" as const,
-    namespace: STATE_NAMESPACES.acp,
-    stateKey: "binding-index",
-  };
-}
-
-type AcpBindingIndexEntry = {
-  companyId: string;
-  acpSessionId: string;
-};
-
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
   return value as Record<string, unknown>;
@@ -91,47 +78,6 @@ function parseBinding(raw: unknown): AcpThreadBinding | null {
     agentName: record.agentName,
     openedAt: record.openedAt,
   };
-}
-
-async function getBindingIndex(ctx: PluginContext): Promise<AcpBindingIndexEntry[]> {
-  const raw = await ctx.state.get(indexLocator());
-  if (!Array.isArray(raw)) return [];
-  return raw.filter((entry): entry is AcpBindingIndexEntry => {
-    const record = asRecord(entry);
-    return typeof record?.companyId === "string" && typeof record.acpSessionId === "string";
-  });
-}
-
-async function setBindingIndex(ctx: PluginContext, entries: AcpBindingIndexEntry[]): Promise<void> {
-  await ctx.state.set(indexLocator(), entries);
-}
-
-async function rememberBindingIndexEntry(ctx: PluginContext, entry: AcpBindingIndexEntry): Promise<void> {
-  const entries = await getBindingIndex(ctx);
-  if (entries.some((candidate) => candidate.acpSessionId === entry.acpSessionId)) return;
-  entries.push(entry);
-  await setBindingIndex(ctx, entries);
-}
-
-async function forgetBindingIndexEntry(ctx: PluginContext, acpSessionId: string): Promise<void> {
-  const entries = await getBindingIndex(ctx);
-  const filtered = entries.filter((entry) => entry.acpSessionId !== acpSessionId);
-  if (filtered.length === entries.length) return;
-  await setBindingIndex(ctx, filtered);
-}
-
-async function findBindingForSession(
-  ctx: PluginContext,
-  acpSessionId: string,
-): Promise<AcpThreadBinding | null> {
-  const entries = await getBindingIndex(ctx);
-  for (const entry of entries) {
-    if (entry.acpSessionId !== acpSessionId) continue;
-    const raw = await ctx.state.get(bindingLocator(entry.companyId, acpSessionId));
-    const binding = parseBinding(raw);
-    if (binding) return binding;
-  }
-  return null;
 }
 
 export async function getAcpBinding(
@@ -172,7 +118,6 @@ export async function emitAcpSpawn(input: EmitAcpSpawnInput): Promise<{ acpSessi
   };
 
   await ctx.state.set(bindingLocator(companyId, acpSessionId), binding);
-  await rememberBindingIndexEntry(ctx, { companyId, acpSessionId });
 
   await ctx.events.emit(ACP_EVENT_NAMES.spawn, companyId, {
     sessionId: acpSessionId,
@@ -217,7 +162,6 @@ export async function emitAcpClose(input: {
         error: error instanceof Error ? error.message : String(error),
       });
     }
-    await forgetBindingIndexEntry(input.ctx, input.acpSessionId);
   }
 }
 
@@ -263,7 +207,7 @@ export type AcpOutputObserver = (event: {
   payload: AcpOutputPayload;
   binding: AcpThreadBinding | null;
   relayed: boolean;
-  dropReason?: "unknown_session" | "non_text" | "no_relay_handler" | "relay_failed";
+  dropReason?: "unknown_session" | "scope_mismatch" | "non_text" | "no_relay_handler" | "relay_failed";
 }) => Promise<void> | void;
 
 let outputObserver: AcpOutputObserver | null = null;
@@ -294,9 +238,13 @@ export function registerAcpOutputListener(ctx: PluginContext): void {
     const payload = parseAcpOutputPayload(event.payload);
     if (!payload) return;
 
-    const binding = await findBindingForSession(ctx, payload.sessionId);
+    const binding = await getAcpBinding(ctx, event.companyId, payload.sessionId);
     if (!binding) {
       await notifyObserver({ payload, binding: null, relayed: false, dropReason: "unknown_session" });
+      return;
+    }
+    if (binding.companyId !== event.companyId || (payload.threadId && payload.threadId !== binding.issueId)) {
+      await notifyObserver({ payload, binding, relayed: false, dropReason: "scope_mismatch" });
       return;
     }
 

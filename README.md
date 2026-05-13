@@ -222,13 +222,15 @@ LINE is overwhelmingly used in Japan, Taiwan, Thailand, and Indonesia. The plugi
 
 This plugin participates in the [paperclip-plugin-acp](https://github.com/mvanhorn/paperclip-plugin-acp) ecosystem alongside the Telegram, Slack, and Discord bridges. Inbound LINE turns route through `ctx.agents.sessions.*` by default; if the resolved `agentId` is not present in the host's agent registry, the turn falls back to ACP via plugin-namespaced bus events:
 
-* `plugin.paperclip-plugin-line.acp-spawn` — first turn, payload `{ sessionId, agentName, chatId, threadId, companyId, mode: "persistent" }`. `chatId` is the LINE userId, `threadId` is the Paperclip issue id, and the bridge generates `sessionId` client-side (matching the Telegram reference implementation).
-* `plugin.paperclip-plugin-line.acp-message` — subsequent turns, payload `{ sessionId, text }`.
-* `plugin.paperclip-plugin-line.acp-close` — on idle close, `line.close_thread`, or operator close, payload `{ sessionId }`.
+* `plugin.line-bridge.acp-spawn` — first turn, payload `{ sessionId, agentName, chatId, threadId, companyId, mode: "persistent" }`. `chatId` is the LINE userId, `threadId` is the Paperclip issue id, and the bridge generates `sessionId` client-side.
+* `plugin.line-bridge.acp-message` — subsequent turns, payload `{ sessionId, text }`.
+* `plugin.line-bridge.acp-close` — on idle close, `line.close_thread`, or operator close, payload `{ sessionId }`.
 
-The bridge subscribes to `plugin.paperclip-plugin-acp.output` and relays `type: "text"` and `type: "error"` frames back to LINE through the same push pipeline as `line.push_text`. ACP output relays carry `source: "acp_relay"` in telemetry and bypass the daily push budget (the agent's reply is the user's reply, not a tool-initiated outbound message). Per-tenant routing is governed entirely by which `agentId` your `onProvisionPrincipal` hook returns: an agentId that the host has registered runs natively; anything else (e.g. `"claude"`, `"gemini"`) routes via ACP.
+The bridge subscribes to `plugin.paperclip-plugin-acp.output` and relays `type: "text"` and `type: "error"` frames back to LINE through the same push pipeline as `line.push_text`. ACP output relays carry `source: "acp_relay"` in telemetry and bypass the daily push budget (the agent's reply is the user's reply, not a tool-initiated outbound message). Per-tenant routing is governed by which `agentId` your `onProvisionPrincipal` hook returns: a runnable agent in the host registry runs natively; a missing agent id such as `"claude"` or `"gemini"` routes via ACP; an existing paused/non-runnable native agent is not treated as an ACP name.
 
 ACP operational counters (`acpSpawned`, `acpMessages`, `acpClosed`, `acpOutputRelayed`, `acpOutputDropped`) appear in both the `line-ops` data source and the `onHealth` snapshot.
+
+Before releasing ACP changes, verify the manifest still declares the required `events.emit` and `events.subscribe` permissions, run the ACP bridge tests, and coordinate upstream `paperclip-plugin-acp` so it listens to `line-bridge` and honors the caller-supplied `sessionId` contract.
 
 ## Development
 

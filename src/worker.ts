@@ -932,22 +932,30 @@ function toResolvedActivePrincipal(value: unknown): ResolvedActivePrincipal | nu
   };
 }
 
-async function resolveAgentId(
+type DeliveryTarget =
+  | { kind: "native"; agentId: string }
+  | { kind: "native_unavailable"; agentId: string; status: string }
+  | { kind: "acp"; agentId: string }
+  | { kind: "none" };
+
+async function resolveDeliveryTarget(
   ctx: PluginContext,
   principal: ResolvedActivePrincipal,
   preferredAgentId?: string | null,
-): Promise<string | null> {
-  const candidate = preferredAgentId ?? principal.agentId;
-  if (typeof candidate !== "string" || candidate.length === 0) return null;
+): Promise<DeliveryTarget> {
+  const candidate = (preferredAgentId ?? principal.agentId ?? "").trim();
+  if (!candidate) return { kind: "none" };
 
   const agents = await ctx.agents.list({ companyId: principal.paperclipCompany });
   const matching = agents.find((agent) => (agent as { id?: unknown }).id === candidate);
-  if (!matching) return null;
+  if (!matching) return { kind: "acp", agentId: candidate };
 
   const status = String((matching as { status?: unknown }).status ?? "").toLowerCase();
-  if (!["active", "idle", "running"].includes(status)) return null;
+  if (!["active", "idle", "running"].includes(status)) {
+    return { kind: "native_unavailable", agentId: candidate, status };
+  }
 
-  return candidate;
+  return { kind: "native", agentId: candidate };
 }
 
 async function getThreadState(
@@ -1597,11 +1605,8 @@ async function processQueuedEventWithActivePrincipal(
   }
 
   const existingDeliveryContext = queuedEvent.deliveryContext;
-  const nativeAgentId = await resolveAgentId(ctx, principal, existingDeliveryContext?.agentId);
-  const fallbackAgentName = (existingDeliveryContext?.agentId ?? principal.agentId ?? "").trim();
-  const sessionMode: SessionMode = nativeAgentId ? "native" : "acp";
-  const agentId = nativeAgentId ?? fallbackAgentName;
-  if (!agentId) {
+  const deliveryTarget = await resolveDeliveryTarget(ctx, principal, existingDeliveryContext?.agentId);
+  if (deliveryTarget.kind === "none") {
     ctx.logger.warn("Skipping LINE event: no agent available for principal", {
       requestId,
       lineUserId,
@@ -1616,6 +1621,26 @@ async function processQueuedEventWithActivePrincipal(
       reason: "no_agent",
     };
   }
+  if (deliveryTarget.kind === "native_unavailable") {
+    ctx.logger.warn("Skipping LINE event: native agent is not runnable", {
+      requestId,
+      lineUserId,
+      paperclipCompany: principal.paperclipCompany,
+      agentId: deliveryTarget.agentId,
+      agentStatus: deliveryTarget.status,
+    });
+    return {
+      dedupKey,
+      processedAt: new Date().toISOString(),
+      outcome: "skipped",
+      requestId,
+      lineUserId,
+      reason: "agent_unavailable",
+    };
+  }
+
+  const sessionMode: SessionMode = deliveryTarget.kind === "native" ? "native" : "acp";
+  const agentId = deliveryTarget.agentId;
   if (sessionMode === "acp") {
     ctx.logger.info("Routing LINE turn via ACP fallback", {
       requestId,
@@ -1721,7 +1746,7 @@ async function processQueuedEventWithActivePrincipal(
         capturedAt: occurredAt,
       });
 
-      if (issue.assigneeAgentId !== deliveryAgentId) {
+      if (sessionMode === "native" && issue.assigneeAgentId !== deliveryAgentId) {
         issue = await ctx.issues.update(
           deliveryIssueId,
           { assigneeAgentId: deliveryAgentId },
