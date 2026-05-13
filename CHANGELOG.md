@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file. Format foll
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-05-13
+
+### Changed
+
+- **BREAKING**: Renamed `manifest.id` from `line-bridge` to `paperclip-plugin-line` for ecosystem consistency with `paperclip-plugin-{telegram,slack,discord}`. Existing installs must re-install and re-point the LINE Developers Console webhook URL to `/api/plugins/paperclip-plugin-line/webhooks/line-webhook`. The previous URL `/api/plugins/line-bridge/webhooks/line-webhook` no longer resolves.
+- Updated the release verification expectation: upstream `paperclip-plugin-acp` must list `paperclip-plugin-line` in `CHAT_PLATFORM_PLUGINS` so it subscribes to `plugin.paperclip-plugin-line.acp-{spawn,message,close}` and honors caller-supplied ACP `sessionId` values.
+
+### Added
+
+- Added the ACP fallback bridge for LINE principals whose resolved `agentId` is not registered natively, including `acp-spawn`, `acp-message`, `acp-close`, and `plugin.paperclip-plugin-acp.output` relay handling.
+- Declared manifest permissions for `events.emit` and `events.subscribe` so ACP bus traffic is explicit and least-privilege.
+- Added the plugin-scoped ACP state namespace and bindings used to persist ACP session routing state.
+- Added ACP operational counters in `line-ops` and health snapshots for spawned sessions, relayed messages, closes, and dropped ACP output.
+
 ## [0.1.0]
 
 Initial public release. First-class LINE Messaging API integration for Paperclip.

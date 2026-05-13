@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  ACP_EVENT_NAMES,
+  ACP_OUTPUT_EVENT,
+  ACP_PLUGIN_ID,
   JOB_KEYS,
   PLUGIN_ID,
   PLUGIN_VERSION,
+  STATE_NAMESPACES,
   TOOL_NAMES,
   WEBHOOK_KEYS,
 } from "../src/constants.js";
@@ -11,7 +15,7 @@ import manifest from "../src/manifest.js";
 describe("paperclip-plugin-line manifest", () => {
   it("declares the public plugin identity", () => {
     expect(manifest.id).toBe(PLUGIN_ID);
-    expect(manifest.id).toBe("line-bridge");
+    expect(manifest.id).toBe("paperclip-plugin-line");
     expect(manifest.version).toBe(PLUGIN_VERSION);
     expect(manifest.apiVersion).toBe(1);
     expect(manifest.description).toContain("verified webhook intake");
@@ -39,8 +43,21 @@ describe("paperclip-plugin-line manifest", () => {
         "agent.sessions.list",
         "agent.sessions.send",
         "agent.sessions.close",
+        "events.emit",
+        "events.subscribe",
       ]),
     );
+  });
+
+  it("pins the ACP bridge namespace and event identifiers", () => {
+    expect(STATE_NAMESPACES.acp).toBe("acp");
+    expect(ACP_PLUGIN_ID).toBe("paperclip-plugin-acp");
+    expect(ACP_EVENT_NAMES).toEqual({
+      spawn: "acp-spawn",
+      message: "acp-message",
+      close: "acp-close",
+    });
+    expect(ACP_OUTPUT_EVENT).toBe("plugin.paperclip-plugin-acp.output");
   });
 
   it("declares only the public-facing webhook endpoint", () => {

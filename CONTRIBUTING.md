@@ -54,7 +54,7 @@ The plugin builds against `@paperclipai/plugin-sdk` from npm. To develop against
 Use a LINE Messaging API channel in [free tier](https://developers.line.biz/en/docs/messaging-api/overview/#price) for integration testing. For local webhook testing, point the LINE Developers Console webhook URL at an [ngrok](https://ngrok.com/) or [cloudflared tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) front for your local Paperclip instance:
 
 ```text
-https://<your-tunnel>.example.com/api/plugins/line-bridge/webhooks/line-webhook
+https://<your-tunnel>.example.com/api/plugins/paperclip-plugin-line/webhooks/line-webhook
 ```
 
 Set the LINE channel to a sandbox bot account, not a customer-facing one.

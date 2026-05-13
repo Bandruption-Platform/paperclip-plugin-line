@@ -37,6 +37,8 @@ const manifest: PaperclipPluginManifestV1 = {
     "agent.sessions.list",
     "agent.sessions.send",
     "agent.sessions.close",
+    "events.emit",
+    "events.subscribe",
   ],
   entrypoints: {
     worker: "./dist/worker.js",

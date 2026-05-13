@@ -1,6 +1,6 @@
 {
   "name": "paperclip-plugin-line",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Bidirectional LINE Messaging API integration for Paperclip: verified webhook intake, agent sessions per LINE user, outbound LINE push tools, and inbound media relay.",
   "keywords": [
     "paperclip",
